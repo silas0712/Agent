@@ -8,6 +8,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,16 +38,29 @@ class SessionResult:
     messages: list[Message] = field(default_factory=list)
     run_dir: Path | None = None
     duration: float = 0.0
+    stats: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
         return self.status == "done"
+
+    def stats_line(self) -> str:
+        """One human readable line summarising the run counters."""
+
+        return (
+            f"模型调用 {self.stats.get('llm_calls', 0)} 次 · "
+            f"工具调用 {self.stats.get('tool_calls', 0)} 次 · "
+            f"tokens {self.stats.get('tokens', 0)} · "
+            f"审查退回 {self.stats.get('rejections', 0)} 次 · "
+            f"测试失败 {self.stats.get('test_failures', 0)} 次"
+        )
 
     def to_text(self) -> str:
         lines = [
             f"会话 {self.session_id}: {self.status.upper()}（{self.duration:.1f}s，{self.rounds} 轮，{len(self.messages)} 条消息）",
             f"目标：{self.goal}",
             f"结论：{self.reason or '(无)'}",
+            f"统计：{self.stats_line()}",
         ]
         if self.plan:
             steps = self.plan.get("steps") or []
@@ -125,6 +139,7 @@ class Orchestrator:
         review_payload: dict[str, Any] | None = None
         test_payload: dict[str, Any] | None = None
         started = time.perf_counter()
+        started_wall = time.time()
         deadline = time.monotonic() + self.session_timeout
 
         inboxes = {role: self.bus.inbox(role) for role in self.agents}
@@ -223,10 +238,57 @@ class Orchestrator:
             run_dir=run_dir,
             duration=duration,
         )
+        result.stats = self._stats(
+            rounds=rounds,
+            rejections=rejections,
+            test_failures=test_failures,
+            duration=duration,
+            started_at=started_wall,
+        )
         self._persist(result)
         return result
 
     # -- internals ---------------------------------------------------------
+    def _stats(
+        self,
+        *,
+        rounds: int,
+        rejections: int,
+        test_failures: int,
+        duration: float,
+        started_at: float | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate the counters every role contributed to this session."""
+
+        llm_calls = tokens = 0
+        models: dict[str, int] = {}
+        for role, agent in self.agents.items():
+            client = getattr(agent, "llm", None)
+            if client is None:
+                continue
+            calls = int(getattr(client, "requests", 0) or 0)
+            llm_calls += calls
+            models.setdefault(role.value, calls)
+            usage = getattr(client, "usage_total", None) or {}
+            tokens += int(usage.get("total_tokens", 0) or 0)
+        tool_calls = sum(
+            1
+            for message in self.messages
+            if message.type is MessageType.LOG and message.payload.get("tool")
+        )
+        return {
+            "started_at": round(started_at if started_at is not None else time.time(), 3),
+            "messages": len(self.messages),
+            "rounds": rounds,
+            "llm_calls": llm_calls,
+            "llm_calls_by_role": models,
+            "tool_calls": tool_calls,
+            "tokens": tokens,
+            "rejections": rejections,
+            "test_failures": test_failures,
+            "duration": round(duration, 3),
+        }
+
     async def _finish(self, status: str, reason: str, rounds: int) -> None:
         await self.bus.publish(
             make_message(
@@ -267,6 +329,7 @@ class Orchestrator:
                             "rounds": result.rounds,
                             "reason": result.reason,
                             "duration": round(result.duration, 3),
+                            "stats": result.stats,
                         },
                         "messages": [message.to_envelope() for message in result.messages],
                     },
@@ -277,6 +340,7 @@ class Orchestrator:
                 newline="\n",
             )
             (result.run_dir / "transcript.md").write_text(render_markdown(result), encoding="utf-8", newline="\n")
+            (result.run_dir / "session.log").write_text(render_session_log(result), encoding="utf-8", newline="\n")
         except OSError as exc:  # pragma: no cover - disk problems should not fail a run
             logger.warning("cannot write run artefacts to %s: %s", result.run_dir, exc)
 
@@ -298,6 +362,17 @@ def render_markdown(result: SessionResult) -> str:
         f"- **耗时**：{result.duration:.1f}s",
         f"- **结论**：{result.reason or '(无)'}",
         "",
+        "## 统计",
+        "",
+        "| 指标 | 数值 |",
+        "| --- | --- |",
+        f"| 消息数 | {result.stats.get('messages', len(result.messages))} |",
+        f"| 模型调用 | {result.stats.get('llm_calls', 0)} |",
+        f"| 工具调用 | {result.stats.get('tool_calls', 0)} |",
+        f"| tokens | {result.stats.get('tokens', 0)} |",
+        f"| 审查退回 | {result.stats.get('rejections', 0)} |",
+        f"| 测试失败 | {result.stats.get('test_failures', 0)} |",
+        "",
         "## 消息流水",
         "",
     ]
@@ -314,4 +389,27 @@ def render_markdown(result: SessionResult) -> str:
         lines.append("```")
         lines.append("")
     return "\n".join(lines)
+
+
+def render_session_log(result: SessionResult) -> str:
+    """Compact, timestamped log line per message (``runs/<id>/session.log``)."""
+
+    lines = [
+        f"# session {result.session_id}",
+        f"# goal: {result.goal}",
+        f"# started: {datetime.fromtimestamp(result.stats.get('started_at', time.time())).strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+    ]
+    for message in result.messages:
+        stamp = datetime.fromtimestamp(message.created_at).strftime("%H:%M:%S")
+        target = recipient_label(message)
+        text = message.summary(200).replace("\n", " ")
+        lines.append(f"[{stamp}] r{message.round} {message.sender.value:<12} -> {target:<12} {message.type.value:<8} {text}")
+    lines.append("")
+    lines.append(
+        f"# finished: status={result.status} rounds={result.rounds} duration={result.duration:.2f}s "
+        f"messages={len(result.messages)} reason={result.reason}"
+    )
+    lines.append(f"# stats: {result.stats_line()}")
+    return "\n".join(lines) + "\n"
 

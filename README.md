@@ -56,6 +56,66 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m agentteam.main --goal "写一个 fizzbuzz 模块和测试" --workspace .\sandbox
 ```
 
+## 一键启动（Windows，零配置）
+
+```powershell
+scripts\start-agentteam.bat            # 启动 Web UI 并自动打开浏览器
+scripts\start-agentteam.bat cli        # 命令行跑一次内置示例目标
+scripts\start-agentteam.bat cli --goal "写一个 fizzbuzz 模块和测试"
+scripts\start-agentteam.bat check      # 打印解析后的配置
+scripts\start-agentteam.bat sessions   # 列出最近的会话记录
+scripts\start-agentteam.bat test       # 跑单元测试（pytest）
+scripts\start-agentteam.bat help       # 查看用法
+```
+
+脚本会自动找 Python 3.10+（`py -3` → `python`，也可以用 `AGENTTEAM_PY` 指定解释器）、
+创建 `.venv`、安装依赖，然后按模式启动；结尾的“按任意键关闭”可以用 `AGENTTEAM_NO_PAUSE=1` 关掉（CI 用）。
+`.bat` 本身是纯 ASCII + `chcp 65001`，中文输出全部由 Python 侧负责，不会乱码。
+
+## Web UI（浏览器里的实时控制台）
+
+```powershell
+.\.venv\Scripts\python.exe -m agentteam.main --serve --open-browser
+```
+
+打开 `http://127.0.0.1:8765`：左侧填目标 / 工作区 / 模型参数并启动会话，右侧是 WebSocket 推送的
+实时消息流（planner → actor → reviewer → tester 逐条滚动），会话结束后随时可以查看历史会话与转录。
+
+| 参数 | 说明 |
+| --- | --- |
+| `--serve` | 启动 Web 服务（需要 `.[web]` 可选依赖：`pip install -e ".[web]"`） |
+| `--host HOST` | 监听地址，默认 `127.0.0.1`（只本机可访问） |
+| `--port PORT` | 监听端口，默认 `8765` |
+| `--open-browser` | 启动后自动打开浏览器 |
+
+> 会话结束后内存中的实时状态会被释放，页面自动改读磁盘上的 `transcript.json`，
+> 因此长时间开着 Web UI 也不会越用越占内存。
+
+## Windows 安装包（自带 Python，不需要预装环境）
+
+`dist\agentteam-<版本>-setup.exe` 是 per-user 安装包：**不需要管理员权限**，也**不需要预装 Python**。
+
+* 内置便携版 CPython 3.14 + 全部依赖（`agentteam[web]`），安装后 54 MB 左右，压缩包仅 18 MB
+* 开始菜单：`agentteam Web UI` / `agentteam 命令行（示例目标）` / `会话记录（runs）` /
+  `配置文件（.env）` / `说明文档` / `卸载 agentteam`（可选桌面快捷方式）
+* 用户数据放在 `%LOCALAPPDATA%\agentteam\{workspace,runs,.env}`，**卸载不会删除**
+* 从源码打包一条命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
+```
+
+脚本会：下载便携版 CPython（带缓存）→ 解包并 patch `._pth` → `pip --target` 装依赖 →
+生成 `.cmd` 启动器 → 用内置离线目标跑冒烟测试 → 调用 Inno Setup 编译安装包；
+没有 Inno Setup 时会先用 winget、失败再回退官方镜像静默安装（per-user）。
+
+| 参数 | 说明 |
+| --- | --- |
+| `-Version 0.2.0` | 覆盖版本号（默认读 `pyproject.toml`） |
+| `-PayloadOnly` | 只构建 payload（`build\installer\payload`），不编译安装包 |
+| `-SkipSmokeTest` | 跳过 payload 冒烟测试 |
+| `-Force` | 忽略缓存的便携版 Python，重新下载解包 |
+
 ## 接入真实模型（任意 OpenAI 兼容端点）
 
 ```powershell
@@ -84,6 +144,9 @@ AGENT_TESTER_MODEL=gpt-4o-mini        # 测试只要总结
 
 任意角色都支持 `AGENT_<ROLE>_PROVIDER / MODEL / BASE_URL / API_KEY / TEMPERATURE / MAX_TOKENS`
 （`<ROLE>` ∈ `PLANNER` `ACTOR` `REVIEWER` `TESTER`），未设置的项继承全局默认值。
+
+`.env` 的查找顺序是 `--env-file` → `AGENT_ENV_FILE` → 项目根目录 `.env`；
+`--check` 会打印最终生效的配置，并对“有 key 没用对模型”之类的组合给出告警。
 
 ## 消息总线
 
@@ -117,6 +180,7 @@ docker compose --profile app up   # Agent 也进容器，用 mock 模型自检
 | --- | --- |
 | `--goal "..."` | 本次目标，省略则用内置的 hello 模块示例 |
 | `--workspace PATH` | 代码沙箱目录（默认 `workspace/`） |
+| `--runs-dir PATH` | 会话记录目录（默认 `runs/`，等价于 `AGENT_RUNS_DIR`） |
 | `--provider mock\|openai` | 全局 LLM 提供方 |
 | `--model / --base-url / --api-key` | 全局端点覆盖（角色级请用 `.env`） |
 | `--bus memory\|redis\|auto` | 总线实现（默认 `auto`） |
@@ -125,11 +189,22 @@ docker compose --profile app up   # Agent 也进容器，用 mock 模型自检
 | `--max-tool-steps N` | 执行者每轮最多工具迭代次数（默认 8） |
 | `--session-timeout SEC` | 整个会话超时（默认 300 秒） |
 | `--strict-first-review` | 演示用：让 reviewer 首轮必定打回一次 |
-| `--env-file PATH` | 指定 `.env` 路径 |
-| `--check` | 只打印解析后的配置随即退出 |
+| `--env-file PATH` | 指定 `.env` 路径（也支持环境变量 `AGENT_ENV_FILE`） |
+| `--check` | 只打印解析后的配置随即退出（并给出配置告警） |
 | `--quiet` | 只打印最终摘要，不输出实时消息流 |
+| `--version` | 打印版本并退出 |
+| `--log-level LEVEL` | 日志级别（默认 `WARNING`） |
 
-会话记录目录通过 `AGENT_RUNS_DIR` 环境变量设置。退出码：`0` 成功、`1` 会话未通过、
+会话记录相关：
+
+| 参数 | 说明 |
+| --- | --- |
+| `--list-sessions [N]` | 列出最近 N 个会话（默认 30），带状态与目标摘要 |
+| `--replay ID` | 回放某个会话的消息流水（支持 id 前缀） |
+| `--export ID` | 导出某个会话的产物 |
+| `--export-to PATH` | 导出目标：目录，或 `*.md` / `*.json` / `*.log` 文件 |
+
+会话记录目录通过 `AGENT_RUNS_DIR` 环境变量设置（或 `--runs-dir`）。退出码：`0` 成功、`1` 会话未通过、
 `2` 配置错误、`130` 手动中断。
 
 ## 内置工具（受工作区沙箱保护）
@@ -155,25 +230,63 @@ docker compose --profile app up   # Agent 也进容器，用 mock 模型自检
 ## 测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 70 项，全离线，无网络 / 无 Docker / 无 API Key
+.\.venv\Scripts\python.exe -m pytest          # 108 项，全离线，无网络 / 无 Docker / 无 API Key
 ```
 
-用例覆盖：总线发布订阅与排空、配置分层（全局 → 角色覆盖）、四个 Agent 的决策分支、
-沙箱越界拦截、LLM mock 与重试、编排状态机（含审查返工与测试失败返工）、会话落盘。
+用例覆盖：总线发布订阅与排空、配置分层（全局 → 角色覆盖）与配置告警、四个 Agent 的决策分支、
+沙箱越界拦截、LLM mock 与重试、编排状态机（含审查返工与测试失败返工）、会话落盘 / 列表 / 回放 / 导出、
+Web API（会话启动、录制回放、未知会话、静态页）、CLI（`--check` / `--version` / `--list-sessions` /
+`--replay` / `--export` / `--serve` / 非法 env / 默认目标）。
 
 ## 目录结构
 
 ```
 src/agentteam/
 ├── bus.py            # InMemoryBus / RedisBus + Subscription
+├── sessions.py       # 会话记录落盘 / 列表 / 回放 / 导出
 ├── schemas.py        # Message / TaskPlan / ActResult / ReviewResult / TestResult
-├── config.py         # .env + CLI 分层配置，按角色生成 LLM 客户端
+├── config.py         # .env + CLI 分层配置、告警，按角色生成 LLM 客户端
 ├── console.py        # rich 实时打印
 ├── orchestrator.py   # 状态机、限流、汇总、transcript 落盘
+├── main.py           # CLI 入口（运行 / 回放 / 导出 / Web）
+├── runtime.py        # 版本号、路径等运行时信息
+├── web/              # FastAPI + WebSocket 控制台（app.py + static/index.html）
 ├── llm/              # client(OpenAI 兼容) / mock(离线脚本) / factory
 ├── agents/           # base / planner / actor / reviewer / tester
 └── tools/            # file / shell / search / registry
+
+scripts/
+├── start-agentteam.bat    # 一键启动（web / cli / check / sessions / test）
+├── build-installer.ps1    # 便携版 payload + Inno Setup 安装包
+├── build-release.ps1      # 测试 → wheel/sdist → 安装包 → SHA256SUMS
+└── bump-version.ps1       # 只改 pyproject.toml 里的版本号
+
+packaging/
+├── agentteam.iss          # Inno Setup 脚本（per-user 安装、中文向导）
+└── translations/          # ChineseSimplified.isl（Inno Setup 不自带中文）
 ```
+
+## 打包与发布
+
+```powershell
+# 1) 改版本号（唯一版本源：pyproject.toml）
+powershell -ExecutionPolicy Bypass -File scripts\bump-version.ps1 -Version 0.2.0
+
+# 2) 一把梭：pytest → wheel/sdist → 安装包 → dist\SHA256SUMS.txt
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
+
+# 3) 加 -Push 就直接提交、打 tag 并推送（tag 会触发 GitHub Actions 发布）
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Push
+```
+
+推 `v*` tag 后，`.github/workflows/release.yml` 会先在 Linux 上跑 3.10 / 3.12 的测试，
+再在 `windows-latest` 上构建 wheel、sdist 和安装包，附上 `SHA256SUMS.txt` 一起挂到 Release。
+
+| 参数 | 说明 |
+| --- | --- |
+| `-Version X.Y.Z` | 覆盖版本号与 tag |
+| `-SkipTests` / `-SkipDist` / `-SkipInstaller` | 跳过对应阶段 |
+| `-Push` | 提交 + `git tag -a vX.Y.Z` + push（`-Force` 允许脏工作区） |
 
 ## 扩展
 

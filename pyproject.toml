@@ -17,16 +17,28 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.30"]
 redis = ["redis>=5.0"]
-dev = ["pytest>=8.0"]
+web = ["fastapi>=0.110", "uvicorn>=0.29", "websockets>=12"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+all = [
+    "openai>=1.30",
+    "redis>=5.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "websockets>=12",
+]
 
 [project.scripts]
 agentteam = "agentteam.main:main"
+agentteam-web = "agentteam.web:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"agentteam.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -118,6 +118,10 @@ class BaseLLMClient(abc.ABC):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # Lightweight observability: every client counts its own traffic, which
+        # the orchestrator aggregates into the session statistics.
+        self.requests = 0
+        self.usage_total: dict[str, int] = {}
 
     @abc.abstractmethod
     async def chat(
@@ -144,6 +148,7 @@ class BaseLLMClient(abc.ABC):
         last_error: LLMError | None = None
         for _ in range(max(1, retries + 1)):
             response = await self.chat(messages, system=system, temperature=temperature)
+            self._record(response)
             try:
                 return extract_json(response.text)
             except LLMError as exc:
@@ -155,6 +160,23 @@ class BaseLLMClient(abc.ABC):
                     {"role": "user", "content": _JSON_REPAIR_HINT},
                 ]
         raise last_error or LLMError("empty response")
+
+    # -- stats -------------------------------------------------------------
+    def _record(self, response: LLMResponse) -> None:
+        """Count one completed model round-trip (and its token usage)."""
+
+        self.requests += 1
+        for key, value in (response.usage or {}).items():
+            if isinstance(value, int):
+                self.usage_total[key] = self.usage_total.get(key, 0) + value
+
+    @property
+    def tokens(self) -> int:
+        return int(self.usage_total.get("total_tokens", 0))
+
+    def reset_stats(self) -> None:
+        self.requests = 0
+        self.usage_total = {}
 
     async def aclose(self) -> None:
         return None

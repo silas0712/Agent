@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -131,6 +132,49 @@ class Settings:
             lines.append(f"{role:8s} -> {self.model_for(role).describe()}")
         return "\n".join(lines)
 
+    def warnings(self) -> list[str]:
+        """Configuration smells worth telling the user about *before* a run."""
+
+        messages: list[str] = []
+        for role in ROLES:
+            config = self.model_for(role)
+            if config.requires_api_key and not config.api_key:
+                messages.append(
+                    f"{role}: provider=openai 但缺少 API key"
+                    f"（设置 OPENAI_API_KEY 或 AGENT_{role.upper()}_API_KEY）"
+                )
+        if self.max_rounds < 1:
+            messages.append("max_rounds < 1，将按 1 轮执行")
+        if self.session_timeout <= 0:
+            messages.append("session_timeout <= 0，将使用默认 300s")
+        if self.max_tool_steps < 1:
+            messages.append("max_tool_steps < 1，执行者将不会调用任何工具")
+        return messages
+
+    def as_dict(self) -> dict[str, object]:
+        """Key-free snapshot, used by ``--check`` and the web UI."""
+
+        def model(role: str) -> dict[str, object]:
+            config = self.model_for(role)
+            return {
+                "provider": config.provider,
+                "model": config.model,
+                "base_url": config.base_url,
+                "has_api_key": bool(config.api_key),
+            }
+
+        return {
+            "bus": self.bus_backend,
+            "redis_url": self.redis_url,
+            "workspace": str(self.workspace),
+            "runs_dir": str(self.runs_dir),
+            "max_rounds": self.max_rounds,
+            "max_tool_steps": self.max_tool_steps,
+            "session_timeout": self.session_timeout,
+            "models": {role: model(role) for role in ROLES},
+            "warnings": self.warnings(),
+        }
+
     @classmethod
     def from_env(
         cls,
@@ -140,11 +184,18 @@ class Settings:
         **overrides: object,
     ) -> "Settings":
         root_path = Path(root).resolve() if root else PROJECT_ROOT
-        load_env_file(env_file if env_file is not None else root_path / ".env")
+        if env_file is None:
+            # AGENT_ENV_FILE lets a packaged install keep its .env outside the
+            # (read-only) installation directory.
+            env_file = os.environ.get("AGENT_ENV_FILE") or root_path / ".env"
+        load_env_file(env_file)
 
         provider = (_get("AGENT_LLM_PROVIDER") or ("openai" if _get("OPENAI_API_KEY") else "mock")).lower()
         if provider not in PROVIDERS:
-            raise ValueError(f"AGENT_LLM_PROVIDER must be one of {PROVIDERS}, got {provider!r}")
+            raise ValueError(
+                f"AGENT_LLM_PROVIDER 只能是 {PROVIDERS} 之一，当前为 {provider!r}"
+                "（留空时会根据是否有 OPENAI_API_KEY 自动选择 mock / openai）"
+            )
 
         default = ModelConfig(
             provider=provider,
@@ -166,7 +217,9 @@ class Settings:
                 continue
             role_provider = (_get(prefix + "PROVIDER") or provider).lower()
             if role_provider not in PROVIDERS:
-                raise ValueError(f"{prefix}PROVIDER must be one of {PROVIDERS}, got {role_provider!r}")
+                raise ValueError(
+                    f"{prefix}PROVIDER 只能是 {PROVIDERS} 之一，当前为 {role_provider!r}"
+                )
             role_models[role] = ModelConfig(
                 provider=role_provider,
                 model=_get(prefix + "MODEL") or default.model,

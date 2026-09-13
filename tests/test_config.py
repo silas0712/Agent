@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from agentteam.config import DEFAULT_GOAL, ModelConfig, Settings, load_env_file
+from agentteam.config import DEFAULT_GOAL, ROLES, ModelConfig, Settings, load_env_file
 
 
 def test_defaults_use_the_offline_mock_provider(tmp_path: Path) -> None:
@@ -81,3 +82,79 @@ def test_env_file_never_overrides_real_environment(tmp_path: Path, monkeypatch: 
     assert load_env_file(env_file) is True
     assert Settings.from_env(root=tmp_path, env_file=env_file).default_model.model == "from-env"
     assert Settings.from_env(root=tmp_path, env_file=env_file).bus_backend == "redis"
+
+
+def test_env_file_can_be_pointed_at_by_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AGENT_ENV_FILE is what the packaged launchers rely on."""
+
+    custom = tmp_path / "custom.env"
+    custom.write_text("AGENT_MODEL=from-custom-file\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_ENV_FILE", str(custom))
+
+    settings = Settings.from_env(root=tmp_path, env_file=None)
+
+    assert settings.default_model.model == "from-custom-file"
+
+
+def test_warnings_flag_every_role_missing_an_openai_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    settings = Settings.from_env(root=tmp_path, env_file=tmp_path / "absent.env")
+
+    messages = settings.warnings()
+    assert len(messages) == len(ROLES)
+    assert all("API key" in message for message in messages)
+
+    offline = Settings.from_env(
+        root=tmp_path,
+        env_file=tmp_path / "absent.env",
+        default_model=ModelConfig(provider="mock", model="mock"),
+    )
+    assert offline.warnings() == []
+
+
+def test_warnings_are_scoped_to_the_offending_role(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_ACTOR_PROVIDER", "openai")
+    monkeypatch.setenv("AGENT_ACTOR_MODEL", "gpt-4o-mini")
+
+    settings = Settings.from_env(root=tmp_path, env_file=tmp_path / "absent.env")
+
+    (message,) = settings.warnings()
+    assert message.startswith("actor:")
+    assert "OPENAI_API_KEY" in message
+
+
+def test_warnings_reach_unsafe_limits(tmp_path: Path) -> None:
+    settings = Settings.from_env(
+        root=tmp_path,
+        env_file=tmp_path / "absent.env",
+        max_rounds=0,
+        max_tool_steps=0,
+        session_timeout=0.0,
+    )
+
+    messages = settings.warnings()
+
+    assert len(messages) == 3
+    assert any("max_rounds" in message for message in messages)
+    assert any("max_tool_steps" in message for message in messages)
+    assert any("session_timeout" in message for message in messages)
+
+
+def test_as_dict_is_key_free_and_complete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+
+    settings = Settings.from_env(root=tmp_path, env_file=tmp_path / "absent.env")
+    snapshot = settings.as_dict()
+
+    assert snapshot["bus"] == "auto"
+    assert snapshot["workspace"] == str(settings.workspace)
+    assert set(snapshot["models"]) == set(ROLES)
+    assert snapshot["models"]["tester"]["has_api_key"] is True
+    assert snapshot["warnings"] == []
+    assert "sk-secret" not in json.dumps(snapshot)
