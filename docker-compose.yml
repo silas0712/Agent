@@ -1,0 +1,41 @@
+# 可选：给 agentteam 起一个 Redis 消息总线。
+# 不需要 Docker 也能用：AGENT_BUS=auto 连不上 Redis 时会自动回退到进程内总线。
+#
+#   docker compose up -d redis        # 只跑总线，Agent 在宿主机上跑
+#   docker compose --profile app up    # 连 Agent 一起跑（容器内用 mock 模型自检）
+name: agentteam
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: agentteam-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    profiles: ["app"]
+    image: python:3.12-slim
+    container_name: agentteam-app
+    depends_on:
+      redis:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      PYTHONPATH: /workspace/src
+      AGENT_BUS: redis
+      REDIS_URL: redis://redis:6379/0
+      AGENT_LLM_PROVIDER: mock
+      AGENT_SHELL_TIMEOUT: "120"
+    # 首次启动会按 pyproject.toml 装依赖（仅 pydantic / python-dotenv / rich）
+    command: >
+      sh -c "pip install --no-cache-dir -e . &&
+             python -m agentteam.main --bus redis --quiet
+             --goal '${AGENT_GOAL:-创建一个 Python 模块 hello.py，提供 greet(name) 函数，返回 Hello, <name>!；并编写 pytest 测试 test_hello.py 覆盖它。}'"
