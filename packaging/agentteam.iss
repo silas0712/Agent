@@ -68,7 +68,7 @@ Name: "chinese"; MessagesFile: "{#ChineseMessagesFile}"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式 / Create a desktop shortcut"; GroupDescription: "附加任务 / Additional icons"
+Name: "desktopicon"; Description: "创建桌面快捷方式 / Create a desktop shortcut"; GroupDescription: "附加任务 / Additional icons"; Flags: unchecked
 
 [Dirs]
 Name: "{localappdata}\agentteam"; Flags: uninsneveruninstall
