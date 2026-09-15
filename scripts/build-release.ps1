@@ -43,6 +43,14 @@ if (-not (Test-Path $Python)) { $Python = 'python' }
 function Step([string] $Text) { Write-Host ''; Write-Host "=== $Text" -ForegroundColor Cyan }
 function Info([string] $Text) { Write-Host "    $Text" -ForegroundColor DarkGray }
 function Fail([string] $Text) { Write-Host "[ERROR] $Text" -ForegroundColor Red; exit 1 }
+function Invoke-Native([scriptblock] $Command) {
+    # Windows PowerShell 5.1 turns any stderr line of an external tool into a
+    # terminating error while $ErrorActionPreference is 'Stop', so relax it.
+    # $LASTEXITCODE is still available to the caller.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Command } finally { $ErrorActionPreference = $previous }
+}
 
 Step 'release'
 $pyproject = Get-Content (Join-Path $Root 'pyproject.toml') -Raw
@@ -55,7 +63,7 @@ Info "version : $Version"
 Info "tag     : $Tag"
 Info "python  : $Python"
 
-$dirty = (& git -C $Root status --porcelain)
+$dirty = Invoke-Native { git -C $Root status --porcelain }
 if ($dirty -and $Push -and -not $Force) {
     Write-Host '    [!] the working tree is dirty:' -ForegroundColor Yellow
     $dirty | ForEach-Object { Write-Host "        $_" -ForegroundColor Yellow }
@@ -64,27 +72,29 @@ if ($dirty -and $Push -and -not $Force) {
 
 if (-not $SkipTests) {
     Step 'tests'
-    & $Python -m pytest -q -p no:cacheprovider
+    Invoke-Native { & $Python -m pytest -q -p no:cacheprovider }
     if ($LASTEXITCODE -ne 0) { Fail 'the test suite is red; refusing to release' }
 }
 
 if (-not $SkipDist) {
     Step 'wheel + sdist'
-    & $Python -c 'import build' 2>$null
+    # NB: the local "build\" work directory shadows the PyPA build package, so
+    # probe its real entry point instead of a bare "import build".
+    Invoke-Native { & $Python -c 'import build.__main__' 2>$null }
     if ($LASTEXITCODE -ne 0) {
         Info 'installing the "build" package'
-        & $Python -m pip install --quiet --disable-pip-version-check build wheel
+        Invoke-Native { & $Python -m pip install --quiet --disable-pip-version-check build wheel }
         if ($LASTEXITCODE -ne 0) { Fail 'cannot install the build package' }
     }
     if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
-    & $Python -m build --outdir $DistDir
+    Invoke-Native { & $Python -m build --outdir $DistDir }
     if ($LASTEXITCODE -ne 0) { Fail 'python -m build failed' }
 }
 
 if (-not $SkipInstaller) {
     Step 'windows installer'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build-installer.ps1') -Version $Version
+    Invoke-Native { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build-installer.ps1') -Version $Version }
     if ($LASTEXITCODE -ne 0) { Fail 'the installer build failed' }
 }
 
@@ -100,18 +110,18 @@ $lines | ForEach-Object { Info $_ }
 
 if ($Push) {
     Step 'git'
-    & git -C $Root add -A
-    & git -C $Root commit -m "release: $Tag" | Out-Null
-    & git -C $Root tag -a $Tag -m "agentteam $Version"
+    Invoke-Native { git -C $Root add -A }
+    Invoke-Native { git -C $Root commit -m "release: $Tag" | Out-Null }
+    Invoke-Native { git -C $Root tag -a $Tag -m "agentteam $Version" }
     if ($LASTEXITCODE -ne 0) { Fail "cannot create the tag $Tag (does it already exist?)" }
-    & git -C $Root push origin HEAD
+    Invoke-Native { git -C $Root push origin HEAD }
     if ($LASTEXITCODE -ne 0) { Fail 'git push failed' }
-    & git -C $Root push origin $Tag
+    Invoke-Native { git -C $Root push origin $Tag }
     if ($LASTEXITCODE -ne 0) { Fail 'pushing the tag failed' }
     Info "pushed $Tag - the release workflow will attach the artefacts"
 } else {
     Step 'next steps'
-    Write-Host "  git add -A; git commit -m \"release: $Tag\"; git tag -a $Tag -m \"agentteam $Version\"; git push origin HEAD --follow-tags" -ForegroundColor DarkGray
+    Write-Host "  git add -A; git commit -m ""release: $Tag""; git tag -a $Tag -m ""agentteam $Version""; git push origin HEAD --follow-tags" -ForegroundColor DarkGray
     Write-Host "  gh release create $Tag dist\* --generate-notes" -ForegroundColor DarkGray
 }
 
