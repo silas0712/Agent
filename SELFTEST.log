@@ -1,0 +1,86 @@
+============================================================
+① 向听数交叉验证（自研实现 vs mahjong 库）
+  样本 300 手，不一致 0 手
+    用例 w1112345678999           自研=0 库=0
+    用例 w123456789 p123 z11      自研=-1 库=-1
+    用例 w19 p19 s19 z1234567     自研=0 库=0
+  引擎当前使用：mahjong 库（主）
+============================================================
+② 批量跑局（300 局，随机 AI）
+  自摸 49 ｜ 荣和 199 ｜ 流局 52 ｜ 平均 58.2 巡
+  出现役种 Top: [('一盃口', 98), ('平和', 87), ('役牌', 62), ('七对子', 52), ('断幺九', 46), ('混一色', 7), ('对对和', 2), ('国士无双', 1)]
+============================================================
+③ 过程回放：找一局分出胜负的对局
+  seed=0
+    P0 配牌: w2 p1 p1 p7 s2 s2 s4 s5 s7 s9 z西 z北 z発
+    P1 配牌: w7 p2 p3 p6 s3 s6 s8 s9 z北 z北 z白 z白 z発
+    P2 配牌: w1 w3 w7 w9 p5 p7 p8 s1 s6 s7 s8 z発 z中
+    P3 配牌: w3 w3 w4 w5 w5 w9 p2 p8 p9 p9 p9 s2 z南
+    P0 摸 p4 | 手牌 w2 p1 p1 p4 p7 s2 s2 s4 s5 s7 s9 z西 z北 z発
+    P0 打 z西
+    P1 摸 s3 | 手牌 w7 p2 p3 p6 s3 s3 s6 s8 s9 z北 z北 z白 z白 z発
+    P1 打 z発
+    P2 摸 w1 | 手牌 w1 w1 w3 w7 w9 p5 p7 p8 s1 s6 s7 s8 z発 z中
+    P2 打 z中
+    P3 摸 s6 | 手牌 w3 w3 w4 w5 w5 w9 p2 p8 p9 p9 p9 s2 s6 z南
+    P3 打 w9
+    P0 摸 p7 | 手牌 w2 p1 p1 p4 p7 p7 s2 s2 s4 s5 s7 s9 z北 z発
+    P0 打 w2
+    P1 摸 z発 | 手牌 w7 p2 p3 p6 s3 s3 s6 s8 s9 z北 z北 z白 z白 z発
+    P1 打 w7
+    P2 摸 w8 | 手牌 w1 w1 w3 w7 w8 w9 p5 p7 p8 s1 s6 s7 s8 z発
+    P2 打 z発
+    P3 摸 p2 | 手牌 w3 w3 w4 w5 w5 p2 p2 p8 p9 p9 p9 s2 s6 z南
+    P3 打 s6
+    P0 摸 w3 | 手牌 w3 p1 p1 p4 p7 p7 s2 s2 s4 s5 s7 s9 z北 z発
+    P0 打 z北
+    P1 摸 w7 | 手牌 w7 p2 p3 p6 s3 s3 s6 s8 s9 z北 z北 z白 z白 z発
+    P1 打 z発
+    P2 摸 s1 | 手牌 w1 w1 w3 w7 w8 w9 p5 p7 p8 s1 s1 s6 s7 s8
+    P2 打 p8
+    P3 摸 w8 | 手牌 w3 w3 w4 w5 w5 w8 p2 p2 p8 p9 p9 p9 s2 z南
+    P3 打 s2
+    P0 摸 w8 | 手牌 w3 w8 p1 p1 p4 p7 p7 s2 s2 s4 s5 s7 s9 z発
+    P0 打 w8
+    P1 摸 z東 | 手牌 w7 p2 p3 p6 s3 s3 s6 s8 s9 z東 z北 z北 z白 z白
+    P1 打 z東
+    P2 摸 p9 | 手牌 w1 w1 w3 w7 w8 w9 p5 p7 p9 s1 s1 s6 s7 s8
+    P2 打 p5
+    P3 摸 p6 | 手牌 w3 w3 w4 w5 w5 w8 p2 p2 p6 p8 p9 p9 p9 z南
+    P3 打 w8
+    P0 摸 s4 | 手牌 w3 p1 p1 p4 p7 p7 s2 s2 s4 s4 s5 s7 s9 z発
+    P0 打 p4
+    P1 摸 z中 | 手牌 w7 p2 p3 p6 s3 s3 s6 s8 s9 z北 z北 z白 z白 z中
+    P1 打 w7
+    P2 摸 z西 | 手牌 w1 w1 w3 w7 w8 w9 p7 p9 s1 s1 s6 s7 s8 z西
+    P2 打 z西
+    P3 摸 p7 | 手牌 w3 w3 w4 w5 w5 p2 p2 p6 p7 p8 p9 p9 p9 z南
+    P3 打 z南
+    P0 摸 w4 | 手牌 w3 w4 p1 p1 p7 p7 s2 s2 s4 s4 s5 s7 s9 z発
+    P0 打 z発
+    P1 摸 w5 | 手牌 w5 p2 p3 p6 s3 s3 s6 s8 s9 z北 z北 z白 z白 z中
+    P1 打 w5
+    P2 摸 w9 | 手牌 w1 w1 w3 w7 w8 w9 w9 p7 p9 s1 s1 s6 s7 s8
+    P2 打 w3
+    P3 摸 s4 | 手牌 w3 w3 w4 w5 w5 p2 p2 p6 p7 p8 p9 p9 p9 s4
+    P3 打 s4
+    P0 摸 z中 | 手牌 w3 w4 p1 p1 p7 p7 s2 s2 s4 s4 s5 s7 s9 z中
+    P0 打 z中
+    P1 摸 z東 | 手牌 p2 p3 p6 s3 s3 s6 s8 s9 z東 z北 z北 z白 z白 z中
+    P1 打 p6
+    P2 摸 s5 | 手牌 w1 w1 w7 w8 w9 w9 p7 p9 s1 s1 s5 s6 s7 s8
+    P2 打 s8
+    P3 摸 w6 | 手牌 w3 w3 w4 w5 w5 w6 p2 p2 p6 p7 p8 p9 p9 p9
+    P3 打 w6
+    P0 摸 p5 | 手牌 w3 w4 p1 p1 p5 p7 p7 s2 s2 s4 s4 s5 s7 s9
+    P0 打 s9
+    P1 摸 w9 | 手牌 w9 p2 p3 s3 s3 s6 s8 s9 z東 z北 z北 z白 z白 z中
+    P1 打 z東
+    P2 摸 z南 | 手牌 w1 w1 w7 w8 w9 w9 p7 p9 s1 s1 s5 s6 s7 z南
+    P2 打 z南
+    P3 摸 s3 | 手牌 w3 w3 w4 w5 w5 p2 p2 p6 p7 p8 p9 p9 p9 s3
+    P3 打 s3
+    P0 摸 p1 | 手牌 w3 w4 p1 p1 p1 p5 p7 p7 s2 s2 s4 s4 s5 s7
+    P0 打 w4
+    ★ P3 荣和（放铳 P0） 役:一盃口 1番 1000点
+  结算 → P3 荣和（P0 放铳）：w3 w3 w4 w4 w5 w5 p2 p2 p6 p7 p8 p9 p9 p9 ｜ 一盃口 1番 ｜ 1000点 ｜ 33巡
